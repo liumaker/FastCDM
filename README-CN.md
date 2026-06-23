@@ -42,6 +42,13 @@ tags:
 
 **FastCDM** 旨在解决性能问题。作为原版 [CDM](https://github.com/opendatalab/UniMERNet/tree/main/cdm) 的高性能优化版本，FastCDM采用浏览器的Katex渲染引擎，而非传统的Latex编译，速度得到了极大的提升。
 
+### CDM vs FastCDM
+
+| 方法 | 渲染引擎 | 公式数 | 总耗时(s) | 公式/秒 | 每条耗时(s) | 加速比 |
+| --- | --- | --- | --- | --- | --- | --- |
+| CDM | TeX Live + ImageMagick | 1,000 | 608 | 1.64 | 0.61 | 1× |
+| **FastCDM** | **Chrome + KaTeX** | **1,000** | **97** | **10.29** | **0.097** | **6.26×** |
+
 ### 🎯 项目目标
 
 FastCDM的核心目标是**在训练过程中提供便捷的使用体验**，帮助推动公式识别任务的进步。我们致力于：

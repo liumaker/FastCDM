@@ -42,6 +42,13 @@ tags:
 
 **FastCDM** aims to address performance issues. As a high-performance optimized version of the original [CDM](https://github.com/opendatalab/UniMERNet/tree/main/cdm), FastCDM employs the browser-based KaTeX rendering engine instead of traditional LaTeX compilation, resulting in significantly improved speed.
 
+### CDM vs FastCDM
+
+| Method | Rendering Engine | Formula Count | Total Time (s) | Formulas/s | Time per Formula (s) | Speedup |
+| --- | --- | --- | --- | --- | --- | --- |
+| CDM | TeX Live + ImageMagick | 1,000 | 608 | 1.64 | 0.61 | 1× |
+| **FastCDM** | **Chrome + KaTeX** | **1,000** | **97** | **10.29** | **0.097** | **6.26×** |
+
 ### 🎯 Project Goals
 
 The core objective of FastCDM is to **provide a convenient user experience during the training process**, helping to advance formula recognition tasks. We are committed to:
