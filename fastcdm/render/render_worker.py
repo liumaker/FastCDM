@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -21,7 +22,6 @@ class RenderResult:
     error_text: Optional[str]
     width: int
     height: int
-    error_type: Optional[str] = None
 
 
 class RenderWorker:
@@ -88,6 +88,14 @@ class RenderWorker:
         )
 
     def render(self, contents: List[str]) -> List[RenderResult]:
+        if not contents:
+            return []
+        try:
+            return self._render(contents)
+        except (WebDriverException, cv2.error) as exc:
+            return [RenderResult(None, True, type(exc).__name__, 0, 0) for _ in contents]
+
+    def _render(self, contents: List[str]) -> List[RenderResult]:
         """
         渲染一组内容并返回每个元素的截图。
         """
@@ -95,7 +103,7 @@ class RenderWorker:
         self.driver.execute_script(
             "document.body.classList.remove('rendering-complete');"
         )
-        self.driver.execute_script(f"render({contents}, false)")
+        self.driver.execute_script("render(arguments[0], false)", contents)
 
         # 等待JS渲染完成的信号
         WebDriverWait(self.driver, self.timeout).until(
@@ -117,20 +125,56 @@ class RenderWorker:
         )
         self.driver.set_window_size(self.window_fix_width, target_height)
 
+        dom_results = self.driver.execute_script(
+            "return [...document.querySelectorAll('.screenshot')].map(element => {"
+            " const rect = element.getBoundingClientRect();"
+            " const error = element.querySelector('.katex-error');"
+            " return {"
+            "   error: Boolean(error || element.dataset.renderError),"
+            "   errorText: element.dataset.renderError || (error ? error.textContent : null),"
+            "   width: Math.ceil(Math.max(element.scrollWidth, rect.width)),"
+            "   height: Math.ceil(Math.max(element.scrollHeight, rect.height))"
+            " };"
+            "});"
+        )
+        if len(dom_results) != len(contents):
+            return [
+                RenderResult(None, True, "DOM result count mismatch", 0, 0)
+                for _ in contents
+            ]
+
         # 获取整个页面的截图
         png = self.driver.get_screenshot_as_png()
         nparr = np.frombuffer(png, np.uint8)
         fullpage_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if fullpage_img is None or fullpage_img.size == 0:
+            return [
+                RenderResult(
+                    None,
+                    True,
+                    result.get("errorText") or "Empty browser screenshot",
+                    int(result.get("width") or 0),
+                    int(result.get("height") or 0),
+                )
+                for result in dom_results
+            ]
 
         # 获取每个渲染元素的边界框
         rects = self.get_rects()
+        if len(rects) != len(contents):
+            return [RenderResult(None, True, "Capture rectangle count mismatch", 0, 0) for _ in contents]
         results = []
         img_h, img_w = fullpage_img.shape[:2]
 
         # 根据边界框裁剪出每个元素的图像
-        for rect in rects:
-            if rect is None:
-                results.append(RenderResult(None, True, "Invalid capture rectangle", 0, 0, "invalid_capture"))
+        for rect, dom_result in zip(rects, dom_results):
+            width = int(dom_result.get("width") or 0)
+            height = int(dom_result.get("height") or 0)
+            error_text = dom_result.get("errorText")
+            if rect is None or rect[2] <= 0 or rect[3] <= 0 or rect[0] < 0 or rect[1] < 0 or rect[0] + rect[2] > img_w or rect[1] + rect[3] > img_h:
+                results.append(
+                    RenderResult(None, True, error_text or "Invalid capture rectangle", width, height)
+                )
             else:
                 x, y, w, h = rect
                 # 计算一个小的随机边距，让截图更自然
@@ -143,7 +187,20 @@ class RenderWorker:
                 y2 = min(img_h, y + h + border_size)
 
                 cropped = fullpage_img[y1:y2, x1:x2]
-                results.append(RenderResult(cropped, cropped.size == 0, "Empty cropped image" if cropped.size == 0 else None, w, h, "empty_image" if cropped.size == 0 else None))
+                if cropped.size == 0:
+                    results.append(
+                        RenderResult(None, True, error_text or "Empty cropped image", width, height)
+                    )
+                else:
+                    results.append(
+                        RenderResult(
+                            cropped,
+                            bool(dom_result.get("error")),
+                            error_text,
+                            width,
+                            height,
+                        )
+                    )
 
         return results
 
