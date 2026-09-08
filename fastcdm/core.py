@@ -7,6 +7,7 @@ from fastcdm.clean import (
 )
 from fastcdm.tokenize import tokenize
 from fastcdm.colorize import process_for_katex, generate_high_contrast_colors
+from fastcdm.latex_processor import validate_formula_structure
 from fastcdm.box import get_bboxes_from_array
 
 import cv2
@@ -26,6 +27,10 @@ TEMPLATE_FILE = root_dir / "render" / "templates" / "formula.html"
 def preprocess(s: str):
     # --- 第一步：清洗与分词 ---
     clean_s = clean(s)
+    try:
+        validate_formula_structure(clean_s)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     success_tokenization, tokenized_s = tokenize(clean_s)
 
     if not success_tokenization:
