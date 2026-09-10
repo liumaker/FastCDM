@@ -24,6 +24,10 @@ class RenderResult:
     error_type: Optional[str] = None
 
 
+def clamp_width(content_width: int, min_width: int, max_width: int, margin: int) -> int:
+    return min(max(content_width + margin, min_width), max_width)
+
+
 class RenderWorker:
     """
     一个使用 Selenium Headless Chrome 渲染HTML内容的工具类。
@@ -31,7 +35,15 @@ class RenderWorker:
     并截取渲染后各元素的图像。
     """
 
-    def __init__(self, template_file: str, timeout: int = 15, driver_path: str = None):
+    def __init__(
+        self,
+        template_file: str,
+        timeout: int = 15,
+        driver_path: str = None,
+        min_width: int = 2000,
+        max_width: int = 16000,
+        horizontal_margin: int = 40,
+    ):
         # --- 配置浏览器选项 ---
         opts = Options()
         opts.add_argument("--headless")
@@ -71,8 +83,12 @@ class RenderWorker:
 
         self.timeout = timeout
 
-        # 定义一个固定的窗口宽度
-        self.window_fix_width = 2000
+        if min_width <= 0 or max_width < min_width or horizontal_margin < 0:
+            raise ValueError("Invalid render width configuration")
+        self.min_width = min_width
+        self.max_width = max_width
+        self.horizontal_margin = horizontal_margin
+        self.window_fix_width = min_width
         self.window_init_height = 300
 
         self.driver.set_window_size(self.window_fix_width, self.window_init_height)
@@ -101,6 +117,23 @@ class RenderWorker:
         WebDriverWait(self.driver, self.timeout).until(
             EC.presence_of_element_located((By.CLASS_NAME, "rendering-complete"))
         )
+
+        measured_widths = self.driver.execute_script(
+            "return [...document.querySelectorAll('.screenshot')]"
+            ".map(e => Math.ceil(Math.max(e.scrollWidth, e.getBoundingClientRect().width)));"
+        )
+        if len(measured_widths) != len(contents):
+            return [RenderResult(None, True, "DOM result count mismatch", 0, 0) for _ in contents]
+        required_width = max([int(value or 0) for value in measured_widths] or [0])
+        if required_width + self.horizontal_margin > self.max_width:
+            return [
+                RenderResult(None, True, "Formula width exceeds maximum", int(width or 0), 0)
+                for width in measured_widths
+            ]
+        self.window_fix_width = clamp_width(
+            required_width, self.min_width, self.max_width, self.horizontal_margin
+        )
+        self.driver.set_window_size(self.window_fix_width, self.window_init_height)
 
         # 根据内容的总高度调整窗口大小，以确保能截取完整图像
         scroll_height = self.driver.execute_script(
@@ -164,8 +197,7 @@ class RenderWorker:
             w = int(size["width"])
             h = int(size["height"])
 
-            # 如果元素宽度超过窗口，可能是一个渲染错误，标记为None
-            if w > self.window_fix_width:
+            if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > self.window_fix_width:
                 rects.append(None)
             else:
                 rects.append((x, y, w, h))
