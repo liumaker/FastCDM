@@ -217,6 +217,8 @@ def _has_katex_error(img: np.ndarray) -> bool:
 
 
 class FastCDM:
+    RETRYABLE_RENDER_ERRORS = {"empty_image", "invalid_capture", "webdriver_error"}
+
     def __init__(self, chromedriver: str = None) -> None:
         self.chromedriver = chromedriver
         self.render_failure_count: int = 0
@@ -309,6 +311,40 @@ class FastCDM:
         ]
         return self.render_worker.render(latex_strings)
 
+    def _recover_renderer(self, failed_attempt: int) -> bool:
+        if failed_attempt == 1 and self.render_worker is not None:
+            self.render_worker.driver.refresh()
+            return False
+        self.close()
+        self.init_render_worker()
+        return True
+
+    def _render_with_retries(self, latex_list: list):
+        last_results = []
+        last_exception = None
+        rebuilt = False
+        for attempt in range(1, 4):
+            try:
+                last_results = self.render_results(latex_list)
+                last_exception = None
+            except Exception as exc:
+                last_results = []
+                last_exception = exc
+
+            if last_exception is None and len(last_results) == len(latex_list):
+                failures = [item for item in last_results if item.error or item.image is None]
+                if not failures:
+                    return last_results, attempt, rebuilt, None
+                if any(item.error_type not in self.RETRYABLE_RENDER_ERRORS for item in failures):
+                    return last_results, attempt, rebuilt, None
+
+            if attempt < 3:
+                try:
+                    rebuilt = self._recover_renderer(attempt) or rebuilt
+                except Exception as exc:
+                    last_exception = exc
+        return last_results, 3, rebuilt, last_exception
+
     def compute(self, gt: str, pred: str, visualize: bool = False) -> tuple:
         """
         计算给定的 GT 和预测 LaTeX 表达式的 CDM 分数。
@@ -323,11 +359,17 @@ class FastCDM:
         gt_latex, gt_color_map = preprocess(gt)
         pred_latex, pred_color_map = preprocess(pred)
 
-        imgs = self.render([gt_latex, pred_latex])
-        if len(imgs) < 2 or imgs[0] is None or imgs[1] is None:
+        results, _, _, render_exception = self._render_with_retries(
+            [gt_latex, pred_latex]
+        )
+        if (
+            render_exception is not None
+            or len(results) < 2
+            or any(result.error or result.image is None for result in results[:2])
+        ):
             self.render_failure_count += 1
             return (0, 0, 0, None) if visualize else (0, 0, 0)
-        gt_img, pred_img = imgs[0], imgs[1]
+        gt_img, pred_img = results[0].image, results[1].image
 
         if _has_katex_error(gt_img) or _has_katex_error(pred_img):
             self.render_failure_count += 1

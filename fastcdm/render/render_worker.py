@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -88,6 +89,22 @@ class RenderWorker:
         )
 
     def render(self, contents: List[str]) -> List[RenderResult]:
+        if not contents:
+            return []
+        try:
+            return self._render(contents)
+        except WebDriverException as exc:
+            return [
+                RenderResult(None, True, f"{type(exc).__name__}: {exc}", 0, 0, "webdriver_error")
+                for _ in contents
+            ]
+        except cv2.error as exc:
+            return [
+                RenderResult(None, True, f"{type(exc).__name__}: {exc}", 0, 0, "invalid_capture")
+                for _ in contents
+            ]
+
+    def _render(self, contents: List[str]) -> List[RenderResult]:
         """
         渲染一组内容并返回每个元素的截图。
         """
